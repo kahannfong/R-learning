@@ -1,0 +1,233 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+Adapted code to practice from Julia Silge's post(https://juliasilge.com/blog/scraping-cran/)
+
+```{r echo=FALSE}  
+#load the packages first
+library("tidyverse")
+library("rvest")
+library("stringr")
+library("lubridate")
+
+```
+
+```{r}
+basketball_links <- function(...){
+  file.path("https://www.basketball-reference.com/teams/",...)
+}
+```
+
+Want to scrape from a bunch of pages
+```{r}
+url_template <- function(year1){
+  paste0("http://www.basketball-reference.com/leagues/NBA_",year1,"_totals.html") #template url of NBA league
+  }
+
+
+```
+
+Scrape one page first
+```{r}
+#trying to scrape one page first
+url_list <- url_template(2015)
+rawhtml <- read_html(url_list)
+rawtable <- html_nodes(rawhtml, "table")[[1]]
+tab <- html_table(rawtable)
+head(tab)
+```
+
+Now to iterate across the other pages too
+```{r}
+
+for (y in 2015:2016){
+  url_list <- url_template(y)
+  read_html(url_list)
+  rawhtml <- read_html(url_list)
+  rawtable <- html_nodes(rawhtml, "table")[[1]]
+  tab <- html_table(rawtable)
+  head(tab)
+  if (exists("tab2")) {tab2 <- rbind(tab,tab2)}
+  if (!exists("tab2")) {tab2 <- tab}
+}
+
+head(tab2)
+```
+
+This can be saved into a csv file
+```{r}
+write.csv(tab2, "tab2.csv", row.names = FALSE)
+```
+
+
+Now to get the players details from the individual player's page. This is from the body of text, so we will need to use regex as well
+
+Test on one player page first
+```{r}
+pagelink <- "https://www.basketball-reference.com/players/a/acyqu01.html"  # this is the test page for one player
+player_id <- str_match(pagelink,'/./(.*?).html')[,2]
+rawhtml <- read_html(pagelink)  # read in html
+rawdiv <- html_nodes(rawhtml,"div")  # get the portion of html that shows the tables of the players 
+rawp <- html_nodes(rawdiv,"p")
+## Get the information we want from the text using regex
+#start with position
+matched <- str_match(rawp,"Position:\n  </strong>\n  (.*?)\n")
+pposition <- matched[!is.na(matched[,1]),2]
+#to get player DoB
+matched <- str_match(rawp,'data-birth="(.*?)">\n')
+pDOB <- matched[!is.na(matched[,1]),2] %>%
+  as.Date()
+#Player NBA Debut
+matched <- str_match(rawp,'NBA Debut: </strong><a href=(.*?)html">(.*?)</a>\n</p>')
+if(length(matched[!is.na(matched[,1])])==0){
+  pNBADebut <- matched[!is.na(matched[,1]),2] %>%
+    as.Date()
+} else {
+    pNBADebut <- NA
+}
+
+#to extract player height
+matched <- str_match(html_text(rawp),'\\((.*?)cm')
+if(length(matched[!is.na(matched[,1])])==0){
+  pheight <- NA 
+} else {
+    pheight <- matched[!is.na(matched[,1]),2]
+  }
+
+#to extract player weight
+matched <- str_match(html_text(rawp)[3],'\\((.*?)cm,\\s(.*?)kg')
+if(length(matched[!is.na(matched[,1])])==0){
+  pweight <- NA
+} else {
+    pweight <- matched[!is.na(matched[,1]),3]
+  }
+
+
+#putting it all together
+df <- data.frame(playerID=player_id, Position=pposition, DOB=pDOB, NBA_Deb=pNBADebut, Height=pheight, weight=pweight)
+```
+
+
+Collect all the player pages (by alphabet) - test on "a" first..
+```{r}
+pagelink <- "https://www.basketball-reference.com/players/a/"
+
+rawhtml <- read_html(pagelink)  # read in html
+rawtable <- html_nodes(rawhtml,"table")  # get the portion of html that shows the tables of the players 
+tab <- html_table(rawtable)  # present as table
+
+rawlinks <- html_nodes(rawhtml,"a") %>%  # get the "a" nodes from the html of the page
+  html_attr("href")  # pull the "href" attribute from these "a" nodes
+  
+playerlinks <- rawlinks[str_detect(rawlinks,"/players/./")]  # filter to get list of links with only the players
+
+#html_attr(html_nodes(rawhtml,"a"),"href")
+
+# edit the behaviour of html_table using trace? https://stackoverflow.com/questions/42119851/how-to-get-the-link-inside-html-table-using-rvest BUT how to edit it back?
+# trace(rvest:::html_table.xml_node, quote({ 
+#   values      <- lapply(lapply(cells, html_node, "a"), html_attr, name = "href")
+#   values[[1]] <- html_text(cells[[1]])
+# }), at = 14)
+
+
+
+```
+
+To iterate over 2 levels, first set the functions for the 2nd level links
+```{r}
+
+alp <- c("a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","y","z")  #alphabets of players
+
+url_template1 <-function(tail){
+  paste0("https://www.basketball-reference.com/players/",tail,"/")
+}
+
+url_template2 <-function(tail){
+  paste0("https://www.basketball-reference.com",tail)
+}
+```
+
+Next, we put it all together
+```{r}
+for (letters in c("a","b")){
+  linklist1 <- url_template1(letters)  
+  rawhtml <- read_html(linklist1)  # read in html
+  rawtable <- html_nodes(rawhtml,"table")  # get the portion of html that shows the tables of the players 
+  tab <- html_table(rawtable)  # present as table
+
+  rawlinks <- html_nodes(rawhtml,"a") %>%  # get the "a" nodes from the html of the page
+    html_attr("href")  # pull the "href" attribute from these "a" nodes
+  
+  playerlinks <- rawlinks[str_detect(rawlinks,"/players/./")]  # filter to get list of links
+  playerlinks <- playerlinks[1:2]  #for testing, only want to look at 2 per alphabet
+  
+  if (exists("playerlinks2")) {playerlinks2 <- c(playerlinks2, playerlinks)}
+  if (!exists("playerlinks2")) {playerlinks2 <- playerlinks}}
+  
+  for (players in playerlinks2){
+    player_id <- str_match(players,'/./(.*?).html')[,2]
+    rawhtml <- read_html(url_template2(players))  # read in html
+    rawdiv <- html_nodes(rawhtml,"div")  # get the portion of html that shows the tables of the players 
+    rawp <- html_nodes(rawdiv,"p")
+    ## Get the information we want from the text using regex
+    #start with position
+    matched <- str_match(rawp,"Position:\n  </strong>\n  (.*?)\n")
+    pposition <- matched[!is.na(matched[,1]),2]
+    #to get player DoB
+    matched <- str_match(as.character(rawp),'data-birth="(.*?)">\n')
+    pDOB <- matched[!is.na(matched[,1]),2] %>%
+      as.Date()
+    #Player NBA Debut
+    matched <- str_match(rawp,'NBA Debut: </strong><a href=(.*?)html">(.*?)</a>\n</p>')
+    if(length(matched[!is.na(matched[,1])])!=0){
+      pNBADebut <- matched[!is.na(matched[,1]),3] %>%
+        as.Date(format="%B %d, %Y")
+    } else {
+      pNBADebut <- NA
+    }
+    
+    #to extract player height
+    matched <- str_match(html_text(rawp),'\\((.*?)cm')
+    if(length(matched[!is.na(matched[,1])])==0){
+      pheight <- NA 
+    } else {
+      pheight <- matched[!is.na(matched[,1]),2]
+    }
+    
+    #to extract player weight
+    matched <- str_match(html_text(rawp),'\\((.*?)cm,\\s(.*?)kg')
+    if(length(matched[!is.na(matched[,1])])==0){
+      pweight <- NA
+    } else {
+      pweight <- matched[!is.na(matched[,1]),3]
+    }
+    
+    #vec <- c(player_id, pposition, pDOB, pNBADebut, pheight, pweight)
+    #putting it all together
+    if(exists("df2")){df2 <- rbind(df2, data.frame(player_id, pposition, pDOB, pNBADebut, pheight, pweight))} 
+    if (!exists("df2")) { df2 <- data.frame(player_id, pposition, pDOB, pNBADebut, pheight, pweight)}
+    
+  }
+
+
+
+```
+
+Results:
+```{r}
+head(df2)
+```
+
+If we extended this code to all the players (instead of just 4 players), we'd have the dataframe to analyze! First, merge the tables - then we'll have the stats along with weight/height and other profile information... and then we can play more with the data
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
